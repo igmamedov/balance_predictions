@@ -7,3 +7,7 @@ plotly
 scikit-learn
 scipy
 xgboost
+fastapi
+pydantic
+uvicorn
+river
