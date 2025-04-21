@@ -15,3 +15,4 @@ fastapi
 pydantic
 uvicorn
 river
+s3fs==2024.2.0
