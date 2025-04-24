@@ -43,4 +43,5 @@ ENV AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@po
 ENV AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLbfzqDDho=
 ENV AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=True
 ENV AIRFLOW__CORE__ENABLE_XCOM_PICKLING=True
-ENV AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth 
+ENV AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+ENV MLFLOW_TRACKING_URI=http://host.docker.internal:5001 

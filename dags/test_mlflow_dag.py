@@ -4,6 +4,8 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 from src.utils import init_mlflow, get_experiment_artifacts, get_experiment_metrics, log_experiment
+import os
+import mlflow
 
 default_args = {
     'owner': 'airflow',
@@ -18,30 +20,55 @@ def test_model():
     """Тестирование модели из MLflow"""
     # Инициализация MLflow
     init_mlflow(
+        tracking_uri='http://host.docker.internal:5001',
         experiment_name="test_experiment_utils",
         s3_bucket="balance-predictions"
     )
     
-    # Получение последней модели из эксперимента
-    artifacts = get_experiment_artifacts("latest")
+    # Получение последнего запуска из эксперимента
+    client = mlflow.tracking.MlflowClient()
+    experiment = client.get_experiment_by_name("model_comparison")
+    if not experiment:
+        raise ValueError("Эксперимент 'model_comparison' не найден")
+    
+    runs = client.search_runs(
+        experiment_ids=[experiment.experiment_id],
+        order_by=["attributes.start_time DESC"],
+        max_results=1
+    )
+    
+    if not runs:
+        raise ValueError("Запуски не найдены в эксперименте")
+    
+    latest_run = runs[0]
+    run_id = latest_run.info.run_id
+    
+    # Получение артефактов последнего запуска
+    artifacts = get_experiment_artifacts(run_id)
     if not artifacts:
-        raise ValueError("Модель не найдена в MLflow")
+        raise ValueError("Артефакты не найдены для последнего запуска")
     
     model = artifacts.get("model")
     if model is None:
         raise ValueError("Модель не найдена в артефактах")
     
     # Создание тестовых данных
-    X_test = np.array([[6], [7], [8], [9], [10]])
+    X_test = np.array([
+        [6,7, 8, 9, 10], 
+        [7,8, 9, 10, 11], 
+        [8,9, 10, 11, 12], 
+        [9,10, 11, 12, 13],
+        [10,11, 12, 13, 14]
+    ])
     
     # Выполнение предсказаний
     y_pred = model.predict(X_test)
     
     # Получение метрик оригинальной модели
-    metrics = get_experiment_metrics("latest")
+    metrics = get_experiment_metrics(run_id)
     
     # Логирование результатов теста
-    run_id = log_experiment(
+    new_run_id = log_experiment(
         model=model,
         model_name="test_model",
         params={
@@ -58,9 +85,9 @@ def test_model():
         }
     )
     
-    print(f"Тестирование завершено. Run ID: {run_id}")
+    print(f"Тестирование завершено. Run ID: {new_run_id}")
     print(f"Предсказания: {y_pred}")
-    return run_id
+    return new_run_id
 
 with DAG(
     'test_mlflow_model',

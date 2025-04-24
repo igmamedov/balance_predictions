@@ -143,5 +143,57 @@ def get_experiment_params(run_id: str) -> Dict[str, str]:
     run = client.get_run(run_id)
     return run.data.params
 
+def get_artifacts_by_run_name(run_name: str, experiment_name: str = None) -> Dict[str, Any]:
+    """
+    Получение артефактов по имени запуска
+    
+    Args:
+        run_name: Имя запуска
+        experiment_name: Имя эксперимента (опционально)
+        
+    Returns:
+        Dict[str, Any]: Словарь с артефактами
+    """
+    client = mlflow.tracking.MlflowClient()
+    
+    # Если указано имя эксперимента, ищем в нем
+    if experiment_name:
+        experiment = client.get_experiment_by_name(experiment_name)
+        if not experiment:
+            raise ValueError(f"Эксперимент '{experiment_name}' не найден")
+        experiment_id = experiment.experiment_id
+    else:
+        experiment_id = None
+    
+    # Поиск запуска по имени
+    runs = client.search_runs(
+        experiment_ids=[experiment_id] if experiment_id else None,
+        filter_string=f"tags.mlflow.runName = '{run_name}'",
+        max_results=1
+    )
+    
+    if not runs:
+        raise ValueError(f"Запуск с именем '{run_name}' не найден")
+    
+    run = runs[0]
+    run_id = run.info.run_id
+    
+    # Получение артефактов
+    artifacts = {}
+    
+    # Получение всех артефактов
+    for artifact in client.list_artifacts(run_id):
+        if artifact.path.endswith('.json'):
+            artifacts[artifact.path] = client.download_artifacts(run_id, artifact.path)
+    
+    # Получение модели
+    try:
+        model_path = f"runs:/{run_id}/model"
+        artifacts['model'] = mlflow.sklearn.load_model(model_path)
+    except Exception as e:
+        print(f"Ошибка при загрузке модели: {e}")
+    
+    return artifacts
+
 def some_helper_function():
     pass

@@ -4,11 +4,11 @@ services:
   mlflow:
     build: .
     ports:
-      - "5001:5000"
+      - "5001:5001"
     volumes:
       - ./mlruns:/app/mlruns
     environment:
-      - MLFLOW_TRACKING_URI=http://localhost:5001
+      - MLFLOW_TRACKING_URI=http://0.0.0.0:5001
       - MLFLOW_S3_ENDPOINT_URL=https://storage.yandexcloud.net
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}

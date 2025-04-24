@@ -12,7 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose MLflow port
-EXPOSE 5000
+EXPOSE 5001
 
 # Command to run MLflow server
-CMD ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000", "--artifacts-destination", "s3://balance-predictions/mlflow"] 
+CMD ["mlflow", "server", "--host", "0.0.0.0", "--port", "5001", "--artifacts-destination", "s3://balance-predictions/mlflow"] 
