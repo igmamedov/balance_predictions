@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
+from airflow.models import Variable
 import warnings
 from config.config_loader import CONFIG
 from src.prod.operators.data_collection import data_collection_task
@@ -19,6 +21,20 @@ with DAG(
     start_date=datetime.strptime(CONFIG['airflow']['start_date'], "%Y-%m-%d"),
     catchup=False,
 ) as dag:
+    
+    # Print MLflow environment variables
+    print_mlflow_env = BashOperator(
+        task_id='print_mlflow_env',
+        bash_command="""
+            echo "MLflow Environment Variables:"
+            echo "MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}"
+            echo "MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL}"
+            echo "MLFLOW_S3_BUCKET: ${MLFLOW_S3_BUCKET}"
+            echo "MLFLOW_ARTIFACT_ROOT: ${MLFLOW_ARTIFACT_ROOT}"
+            echo "AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}"
+            echo "AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}"
+        """,
+    )
     
     # Data collection task
     collect_data = PythonOperator(
@@ -39,4 +55,4 @@ with DAG(
     )
     
     # Define task dependencies
-    collect_data >> train_model >> make_prediction 
+    print_mlflow_env  >> collect_data >> train_model >> make_prediction 

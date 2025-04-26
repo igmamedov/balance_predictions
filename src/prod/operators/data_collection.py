@@ -5,28 +5,11 @@ from config.config_loader import CONFIG
 from src.feature_engineering import FeatureEngineering
 from src.utils import read_from_s3, write_to_s3
 import logging
+import os
 from airflow.hooks.base import BaseHook
 
 logger = logging.getLogger(__name__)
 
-def _get_s3_client():
-    """Get S3 client using Airflow connection"""
-    try:
-        # Get connection from Airflow
-        conn = BaseHook.get_connection('aws_s3_connection')
-        
-        # Create S3 client
-        s3_client = boto3.client(
-            's3',
-            aws_access_key_id=conn.login,
-            aws_secret_access_key=conn.password,
-            region_name=conn.extra_dejson.get('region_name', 'us-east-1')
-        )
-        
-        return s3_client
-    except Exception as e:
-        logger.error(f"Failed to create S3 client: {str(e)}")
-        raise
 
 def _extract_config():
     """Extract and validate configuration parameters"""
@@ -102,7 +85,13 @@ def load_new_data():
     try:
         # Extract configuration
         config = _extract_config()
-        s3_client = _get_s3_client()
+        session = boto3.session.Session()
+        s3_client = session.client(
+            service_name='s3',
+            endpoint_url=os.environ['MLFLOW_S3_ENDPOINT_URL'],
+            aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+            aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
+        )
         current_date = datetime.now().date()
         
         # 1. Load and process lag features
@@ -115,6 +104,7 @@ def load_new_data():
             key=config['work_data']['path'],
             date_col=config['work_data']['date_col']
         )
+        logger.info(f"Work data shape: {work_data.shape}")
         
         # Load target data
         target_data = _load_and_process_data(
@@ -123,22 +113,26 @@ def load_new_data():
             key=config['target_data']['path'],
             date_col=config['target_data']['date_col']
         )
+        logger.info(f"Target data shape: {target_data.shape}")
         
         # 2. Process target data
         logger.info("Processing target data...")
         target_data = target_data[config['lags_params']['attrs']]
         target_data = target_data.shift(1)
+        logger.info(f"Processed target data shape: {target_data.shape}")
         
         # 3. Generate features
         logger.info("Generating features...")
         feature_engineer = FeatureEngineering(
             df=target_data,
+            calendar_df=work_data,
             n_lags=config['lags_params']['n_lags'],
             attrs=config['lags_params']['attrs'],
             tax_days=config['lags_params']['tax_days'],
             alphas=config['lags_params']['alphas']
         )
         features_df = feature_engineer.generate_features()
+        logger.info(f"Generated features shape: {features_df.shape}")
         
         # 4. Process external features
         logger.info("Loading external features...")
@@ -148,10 +142,12 @@ def load_new_data():
             features_config=config['external_features'],
             current_date=current_date
         )
+        logger.info(f"External features shape: {external_features.shape}")
         
         # Join all features
         if not external_features.empty:
             features_df = features_df.join(external_features, how='left')
+            logger.info(f"Final features shape after joining external features: {features_df.shape}")
         
         # 5. Save final data
         logger.info("Saving final data...")
@@ -176,7 +172,7 @@ def load_new_data():
             index=False
         )
         
-        logger.info("Successfully processed and saved all data")
+        logger.info(f"Successfully processed and saved all data. Final shape: {features_df.shape}")
         return features_df
         
     except Exception as e:
