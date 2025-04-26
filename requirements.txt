@@ -3,11 +3,9 @@ mlflow-skinny==2.10.2
 boto3==1.34.34
 s3fs==2024.2.0
 pandas
-numpy
 scikit-learn
 matplotlib
 seaborn
-holidays
 plotly
 scipy
 xgboost
@@ -15,3 +13,7 @@ fastapi
 pydantic
 uvicorn
 river
+feature_engine==1.8.3
+pmdarima==2.0.4
+numpy==1.26.4
+holidays==0.71

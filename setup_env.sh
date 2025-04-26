@@ -11,6 +11,7 @@ pip install --upgrade pip
 
 # Install dependencies
 pip install -r requirements.txt
+pip install -e .
 
 # Install ipykernel and create kernel for Jupyter
 pip install ipykernel
