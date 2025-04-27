@@ -68,39 +68,51 @@ def scoring_task(**context):
         'Timestamp'
     )
     logger.info(f"Sample data:\n{scoring_df.head()}")
+    # work_df = _load_and_process_data(
+    #     s3_client, 
+    #     os.environ['MLFLOW_S3_BUCKET'],
+    #     'features/work_df.csv',
+    #     'Timestamp'
+    #     )
     on_date_data = scoring_df[scoring_df.index.date == date]
+    # logger.info(f'Выходной:\n{work_df.head()}')
 
-    
-    experiment = client.get_experiment_by_name("RegressBoost")
-    if not experiment:
-        raise ValueError("Эксперимент 'RegressBoost' не найден")
-    
-    runs = client.search_runs(
-        experiment_ids=[experiment.experiment_id],
-        order_by=["attributes.start_time DESC"],
-        max_results=1
-    )
-    
-    if not runs:
-        raise ValueError("Запуски не найдены в эксперименте")
-    
-    latest_run = runs[0]
-    run_id = latest_run.info.run_id
-    logger.info(f'Полученный run_id модели: {run_id}')
-    
-    # Получение артефактов последнего запуска
-    artifacts = get_experiment_artifacts(run_id)
-    if not artifacts:
-        raise ValueError("Артефакты не найдены для последнего запуска")
-    
-    model = artifacts.get("model")
-    if model is None:
-        raise ValueError("Модель не найдена в артефактах")
-    # features = artifacts.get('features.json')
-    on_date_data = on_date_data[model.feature_names_in_]
-    logger.info(f'Данные для скоринга: {on_date_data.shape}')
+    # work_df = work_df[work_df.index.date == date]
+    not_work_day = int(on_date_data['is_not_working_day'])
+    logger.info(f'Выходной: {not_work_day}')
+    if not not_work_day:
+        experiment = client.get_experiment_by_name("RegressBoost")
+        if not experiment:
+            raise ValueError("Эксперимент 'RegressBoost' не найден")
+        
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            order_by=["attributes.start_time DESC"],
+            max_results=1
+        )
+        
+        if not runs:
+            raise ValueError("Запуски не найдены в эксперименте")
+        
+        latest_run = runs[0]
+        run_id = latest_run.info.run_id
+        logger.info(f'Полученный run_id модели: {run_id}')
+        
+        # Получение артефактов последнего запуска
+        artifacts = get_experiment_artifacts(run_id)
+        if not artifacts:
+            raise ValueError("Артефакты не найдены для последнего запуска")
+        
+        model = artifacts.get("model")
+        if model is None:
+            raise ValueError("Модель не найдена в артефактах")
+        # features = artifacts.get('features.json')
+        on_date_data = on_date_data[model.feature_names_in_]
+        logger.info(f'Данные для скоринга: {on_date_data.shape}')
 
-    predicted_value = model.predict(on_date_data)
-    logger.info(f'Предсказанное значение баланса: {predicted_value}')
-
+        predicted_value = model.predict(on_date_data)
+        logger.info(f'Предсказанное значение баланса: {predicted_value}')
+    else:
+        predicted_value = 0
+        logger.info('Сегодня выходной! Работяги не работают')
     return predicted_value
