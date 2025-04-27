@@ -1,0 +1,71 @@
+s3:
+  bucket: "balance-predictions"
+  data_path: "prod/balance_data.csv"
+  features_path: "data/features.csv"
+  target_path: 'target/flow.csv'
+
+mlflow:
+  tracking_uri: "http://host.docker.internal:5001"
+  experiment_name: "balance_prediction"
+  model_name: "balance_model"
+
+scoring_date: 
+
+model:
+  target_column: "balance"
+  max_mae: 0.42  # Maximum allowed error
+  retrain_days: 30  # Model retraining period
+  drift_threshold: 0.5  # Drift detection threshold
+  lags: [1, 2, 3, 5, 7]  # Target variable lags
+  ma_windows: [3, 5, 7]  # Moving average windows
+
+feature_selection:
+  n_estimators: 100
+  random_state: 42
+  n_features_to_select: 10
+
+training:
+  param_grid:
+    n_estimators: [50, 100, 200]
+    max_depth: [5, 10, 15]
+    min_samples_split: [2, 5, 10]
+  n_splits: 5
+  scoring: "neg_mean_absolute_error"
+  n_jobs: -1
+
+airflow:
+  owner: "airflow"
+  depends_on_past: false
+  email_on_failure: false
+  email_on_retry: false
+  retries: 1
+  retry_delay_minutes: 5
+  start_date: "2024-01-01"
+  schedule_interval: "0 0 * * *"  # Daily at midnight 
+
+features: 
+  external_feats:
+    exchange_eur:
+      date_col: Date 
+      path: features/exchange_eur.csv
+    exchange_usd:
+      date_col: Date
+      path: features/exchange_usd.csv
+    rate_usa:
+      date_col: Date
+      path: features/rate_usa.csv
+    rate_russ:
+      date_col: Date
+      path: features/rate_russ.csv
+  lags:
+    work:
+      date_col: Timestamp
+      path: features/work_df.csv
+    target:
+      date_col: Timestamp
+      path: target/flow.csv
+  lags_params:
+    n_lags: 10
+    attrs: ['Income', 'Outcome']
+    tax_days: [15, 25]
+    alphas: [0.2, 0.7]
