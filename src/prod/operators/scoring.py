@@ -1,87 +1,106 @@
 import pandas as pd
 import boto3
+import os 
+import mlflow
 from datetime import datetime
-from sklearn.metrics import mean_absolute_error, mean_squared_error
+from src.utils import read_from_s3, write_to_s3
 from config.config_loader import CONFIG
 from src.utils import init_mlflow, get_artifacts_by_run_name, log_experiment
+from src.utils import init_mlflow, get_experiment_artifacts, get_experiment_metrics, log_experiment
 
-def detect_drift(model, data, selected_features, scaler):
-    """Detect data drift"""
-    X = data[selected_features]
-    y = data[CONFIG['model']['target_column']]
-    
-    # Remove rows with missing values
-    X = X.dropna()
-    y = y[X.index]
-    
-    # Scale features
-    X_scaled = scaler.transform(X)
-    
-    # Make predictions
-    y_pred = model.predict(X_scaled)
-    
-    # Calculate metrics
-    mae = mean_absolute_error(y, y_pred)
-    mse = mean_squared_error(y, y_pred)
-    
-    # Check for drift
-    is_drift = mae > CONFIG['model']['max_mae']
-    
-    return is_drift, mae, mse
+import logging
 
-def make_prediction(model, data, selected_features, scaler):
-    """Make prediction for the next period"""
-    # Get the latest data point
-    last_data = data.iloc[-1][selected_features].values.reshape(1, -1)
-    last_data_scaled = scaler.transform(last_data)
-    
-    # Make prediction
-    prediction = model.predict(last_data_scaled)[0]
-    
-    return prediction
+logger = logging.getLogger(__name__)
 
-def scoring_task():
-    """Task for scoring and drift detection"""
-    # Initialize MLflow
-    init_mlflow(
-        tracking_uri=CONFIG['mlflow']['tracking_uri'],
-        experiment_name=CONFIG['mlflow']['experiment_name'],
-        s3_bucket=CONFIG['s3']['bucket']
-    )
-    
-    # Load data
-    s3 = boto3.client('s3')
-    obj = s3.get_object(Bucket=CONFIG['s3']['bucket'], Key=CONFIG['s3']['features_path'])
-    data = pd.read_csv(obj['Body'])
-    
-    # Get latest model
-    artifacts = get_artifacts_by_run_name(CONFIG['mlflow']['model_name'], CONFIG['mlflow']['experiment_name'])
-    model = artifacts["model"]
-    scaler = artifacts["scaler"]
-    selected_features = artifacts["selected_features"]
-    
-    # Detect drift
-    is_drift, mae, mse = detect_drift(model, data, selected_features, scaler)
-    
-    if not is_drift:
-        # Make prediction
-        prediction = make_prediction(model, data, selected_features, scaler)
-        
-        # Log prediction
-        log_experiment(
-            model=model,
-            model_name=f"{CONFIG['mlflow']['model_name']}_prediction",
-            params={
-                "prediction_date": datetime.now().strftime("%Y-%m-%d"),
-                "is_drift": is_drift
-            },
-            metrics={
-                "prediction": prediction,
-                "mae": mae,
-                "mse": mse
-            }
+def _load_and_process_data(s3_client, bucket, key, date_col):
+    """Load data from S3 and process dates"""
+    try:
+        data = read_from_s3(
+            s3_client=s3_client,
+            bucket=bucket,
+            key=key
         )
         
-        return prediction
-    else:
-        return None 
+        if data is None:
+            raise ValueError(f"Failed to read data from S3: {bucket}/{key}")
+            
+        if date_col not in data.columns:
+            raise ValueError(f"Column {date_col} not found in data from {bucket}/{key}")
+            
+        data[date_col] = pd.to_datetime(data[date_col])
+        data.set_index(date_col, inplace=True)
+        return data
+        
+    except Exception as e:
+        logger.error(f"Error loading data from {bucket}/{key}: {str(e)}")
+        raise
+
+
+def scoring_task(**context):
+    """Task for scoring and drift detection"""
+
+    session = boto3.session.Session()
+    s3_client = session.client(
+            service_name='s3',
+            endpoint_url=os.environ['MLFLOW_S3_ENDPOINT_URL'],
+            aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+            aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
+    )
+    # Initialize MLflow
+    init_mlflow(
+        tracking_uri='http://host.docker.internal:5001',
+        experiment_name='RegressBoost',
+        s3_bucket=os.environ['MLFLOW_S3_BUCKET']
+    )
+    client = mlflow.tracking.MlflowClient()
+
+    # Get scoring date
+    dag_run = context['dag_run']
+    date = dag_run.conf.get('date') if dag_run and dag_run.conf else '2021-01-01'
+    logger.info(f'Дата скоринга: {date}')
+    date = datetime.strptime(date, '%Y-%m-%d').date()
+
+    # Get scoring features
+    scoring_df = _load_and_process_data(
+        s3_client,
+        os.environ['MLFLOW_S3_BUCKET'],
+        'prod/balance_data.csv',
+        'Timestamp'
+    )
+    logger.info(f"Sample data:\n{scoring_df.head()}")
+    on_date_data = scoring_df[scoring_df.index.date == date]
+
+    
+    experiment = client.get_experiment_by_name("RegressBoost")
+    if not experiment:
+        raise ValueError("Эксперимент 'RegressBoost' не найден")
+    
+    runs = client.search_runs(
+        experiment_ids=[experiment.experiment_id],
+        order_by=["attributes.start_time DESC"],
+        max_results=1
+    )
+    
+    if not runs:
+        raise ValueError("Запуски не найдены в эксперименте")
+    
+    latest_run = runs[0]
+    run_id = latest_run.info.run_id
+    logger.info(f'Полученный run_id модели: {run_id}')
+    
+    # Получение артефактов последнего запуска
+    artifacts = get_experiment_artifacts(run_id)
+    if not artifacts:
+        raise ValueError("Артефакты не найдены для последнего запуска")
+    
+    model = artifacts.get("model")
+    if model is None:
+        raise ValueError("Модель не найдена в артефактах")
+    # features = artifacts.get('features.json')
+    on_date_data = on_date_data[model.feature_names_in_]
+    logger.info(f'Данные для скоринга: {on_date_data.shape}')
+
+    predicted_value = model.predict(on_date_data)
+    logger.info(f'Предсказанное значение баланса: {predicted_value}')
+
+    return predicted_value

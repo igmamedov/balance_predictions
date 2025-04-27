@@ -1,5 +1,5 @@
 class FinEffect:
-    def __init__(self, key_rate=0.02, n_days=365, delta_deriv=0.005, delta_cred_cb=0.01, delta_dep_cb=-0.009):
+    def __init__(self, key_rate=0.2, n_days=365, delta_deriv=0.005, delta_cred_cb=0.01, delta_dep_cb=-0.009):
         """
         Подсчет финэффекта от решений модели
         
@@ -37,20 +37,22 @@ class FinEffect:
             if pred > 0:
                 decision_effect = pred * (self.key_rate + self.delta_deriv) / self.n_days
             else:
-                decision_effect = 0.0
+                decision_effect = pred * (self.key_rate + self.delta_deriv) / self.n_days
             
             if (actual >= pred) and (pred >=0):
                 adjustment = (actual - pred) * (self.key_rate + self.delta_dep_cb) / self.n_days
             elif (actual <= pred) and (pred >= 0):
                 adjustment = (actual - pred) * (self.key_rate + self.delta_cred_cb) / self.n_days
-            elif (actual >= 0) and (pred <= 0):
-                adjustment = (actual) * (self.key_rate + self.delta_dep_cb) / self.n_days
-            elif (actual <= 0) and (pred <= 0):
-                adjustment = (actual) * (self.key_rate + self.delta_cred_cb) / self.n_days
+            elif (actual >= pred) and (pred <= 0):
+                adjustment = (actual - pred) * (self.key_rate + self.delta_dep_cb) / self.n_days
+            elif (actual <= pred) and (pred <= 0):
+                adjustment = (actual - pred) * (self.key_rate + self.delta_cred_cb) / self.n_days
             else:
                 adjustment = 0
             
             daily_effect = decision_effect + adjustment
+
+            #print(daily_effect)
             total_effect += daily_effect
         
         return total_effect
@@ -73,6 +75,7 @@ class FinEffect:
             else:
                 daily_effect = actual * (self.key_rate + self.delta_cred_cb) / self.n_days
             
+            #print(daily_effect)
             total_effect += daily_effect
         return total_effect
     
@@ -91,4 +94,4 @@ class FinEffect:
         base_val = self.base_value(actual_balances)
 
         effect = model_val - base_val
-        return effect, model_val, base_val
+        return effect
