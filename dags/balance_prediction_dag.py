@@ -6,6 +6,7 @@ from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.operators.dummy import DummyOperator
 from airflow.operators.bash import BashOperator
 from airflow.utils.trigger_rule import TriggerRule
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 import warnings
 from config.config_loader import CONFIG
 from src.prod.operators.data_collection import data_collection_task
@@ -48,21 +49,32 @@ def branch_on_drift_or_weekly(**context):
         return 'feature_selection'
     return 'to_scoring'
 
-def make_next(context, dag_run_obj):
+def make_next(**context):
     """Функция-генератор для TriggerDagRunOperator"""
     # прочитаем дату из текущего conf
-    last_date = context['dag_run'].conf.get('date')
-    if not last_date:
-        # если первый запуск — можно взять execution_date
-        last_date = datetime(2021, 1, 1)
+    dag_run = context['dag_run']
+    last_date = dag_run.conf.get('date') if dag_run and dag_run.conf else '2021-01-01'
+    
     # увеличим на день
-    next_dt = (datetime.strptime(last_date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
+    next_dt = datetime.strptime(last_date, '%Y-%m-%d') + timedelta(days=1)
     # остановка по условию (например, пока не дойдём до today)
-    if next_dt <= datetime.today().strftime('%Y-%m-%d'):
-        dag_run_obj.payload = {'date': next_dt}
-        return dag_run_obj
-    # иначе не триггерим
-    return last_date
+    if next_dt > datetime(2021, 1, 15):
+        next_dt = None
+    else:
+        next_dt = next_dt.strftime('%Y-%m-%d')
+        logger.info(f'Next date: {next_dt}')
+    context['ti'].xcom_push(key='next_date', value=next_dt)
+
+
+def branch_by_xcom(**context):
+    ti = context['ti']
+    # таcк, который пушит в XCom ключ 'date'
+    next_date = ti.xcom_pull(task_ids='calculate_next_date', key='next_date')
+    logger.info(f'Next date: {next_date}')
+    if next_date:
+        return 'trigger_dag'
+    else:
+        return 'stop'
 
 with DAG(
     'balance_prediction',
@@ -129,10 +141,34 @@ with DAG(
         provide_context=True,
         trigger_rule=TriggerRule.ONE_SUCCESS,  # вместо all_success
     )
+    trigger_next = PythonOperator(
+        task_id='calculate_next_date',
+        python_callable=make_next,
+        provide_context=True    
+    )
 
+    branch_new_dag = BranchPythonOperator(
+        task_id='branch_new_dag',
+        python_callable=branch_by_xcom,
+        provide_context=True,
+    )
+
+    trigger_dag = TriggerDagRunOperator(
+        task_id='trigger_dag',
+        trigger_dag_id='balance_prediction',
+        conf={'date': '{{ ti.xcom_pull(task_ids="calculate_next_date", key="next_date") }}'},
+        trigger_rule=TriggerRule.ONE_SUCCESS,
+    )
+
+    stop = PythonOperator(
+        task_id='stop',
+        python_callable=lambda: print("No date found, stopping."),
+        trigger_rule=TriggerRule.ONE_SUCCESS,
+    )
     # И в зависимостих можно оставить то, что у вас:
     collect_data >> detect_drift >> branch
     branch >> [feature_selection, to_scoring]
     feature_selection >> retrain_model
     retrain_model >> score_data
-    to_scoring >> score_data
+    to_scoring >> score_data >> trigger_next
+    trigger_next >> branch_new_dag >> [trigger_dag, stop]

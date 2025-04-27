@@ -26,18 +26,33 @@
 
 1. Создайте файл `.env` в корне проекта со следующими переменными:
 ```bash
-AWS_ACCESS_KEY_ID=your_access_key
-AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_ACCESS_KEY_ID=your_access_key_id
+AWS_SECRET_ACCESS_KEY=your_secret_access_key
 AWS_DEFAULT_REGION=ru-central1
-MLFLOW_S3_BUCKET=balance-predictions
+MLFLOW_S3_BUCKET=your_bucket_name
+MLFLOW_S3_ENDPOINT_URL=https://storage.yandexcloud.net
+MLFLOW_ARTIFACT_ROOT=s3://your_bucket_name/mlflow
 ```
 
-2. Запустите MLflow сервер:
+2. Создайте виртуальное окружение и активируйте его:
+```bash
+bash setup_env.sh
+source .venv/bin/activate  # для Linux/Mac
+# или
+.venv\Scripts\activate  # для Windows
+```
+
+3. Запустите MLflow сервер:
 ```bash
 docker compose up --build
 ```
+![Пример mlflow](images/mlflow.png)
 
-3. MLflow UI будет доступен по адресу: http://localhost:5001
+Mlflow привязан к S3 хранилищу на Yandex Cloud для обеспечения доступности экспериментов и обмена данными между участниками команды 
+
+Продакшен эксперимент, где собраны модели для пайплайна: **RegressBoost**
+
+4. MLflow UI будет доступен по адресу: http://localhost:5001
 
 ## Запуск Airflow
 
@@ -60,181 +75,82 @@ docker compose -f docker-compose-airflow.yml up --build
    - Логин: airflow
    - Пароль: airflow
 
+![Пример airflow](images/airflow.png)
+
+Продакшн ДАГ для пайплайна предсказания модели: **balance_prediction**
+
+Структура ДАГа:
+   - *collect_data*: сборка фичей на текущую дату. Включает в себя сборку сырых данных внешних признаков, таргет и Feature Engineering, в котором считаются лаговые и другие преобразования для признаков. Результат записывается на S3 хранилище в папку prod 
+   - *detect_drift*: оператор поиска дрифта в данных, на выходе возвращается true или false, в зависимости от наличия разладки в данных
+   - *branch*: оператор ветвлиния который выбирает два пути: перейти к скорингу или пойти на переобучение в случае если замечена разладка или наступил период переобучения (каждое воскресенье)
+   - *feature_selection*: поиск наиболее релевантных признаков. Результат записывается в виде pickle в папку prod
+   - *retrain_model*: переобучение модели с оптимизацией параметров на актуальных данных. Модель записывается в продакшн эксперемент на S3 и MLflow
+   - *to_scoring*: дамми оператор для того чтобы перейти к скорингу
+   - *score_date*: скоринг текущего дня, возврашается значение скора 
+   - *calculate_next_date*: оператор вычисления следующего дня для рекурсивного запуска
+   - *branch_new_dag*: оператор ветвления - либо останавливает даг, если был достигнуть день остановки, или запуск ДАГа за следующий день
+   - *trigger_dag*: триггер оператор, запускает ДАГ за следующий день снова. Нужен для ретро-тестирования 
+   - *stop*: остановка выполнения 
+
+AirFlow интегрирован в общей сети с MLflow и имеет доступ к чтению и созданию моделей
 ## Структура проекта
 
 ```
 balance_predictions/
-├── src/
-│   ├── __init__.py
-│   └── utils.py           # Утилиты для работы с MLflow
-├── tests/
-│   └── test_mlflow_utils.py    # Тесты утилит MLflow
-├── dags/
-│   └── test_mlflow_dag.py      # Тестовый DAG для Airflow
-├── logs/                       # Логи Airflow 
-├── plugins/                    # Плагины Airflow
-├── config/                     # Конфигурационные файлы
-├── Dockerfile                  # Конфигурация Docker для MLflow
-├── docker-compose.yml          # Конфигурация Docker Compose для MLflow
-├── docker-compose-airflow.yml  # Конфигурация Docker Compose для Airflow
-├── requirements.txt            # Зависимости Python
-├── setup.py                    # Конфигурация пакета
-└── README.md                   # Документация проекта
-```
-
-1. Клонируйте репозиторий:
-```bash
-git clone <repository-url>
-cd balance_predictions
-```
-
-2. Создайте виртуальное окружение и активируйте его:
-```bash
-bash setup_env.sh
-source .venv/bin/activate  # для Linux/Mac
-# или
-.venv\Scripts\activate  # для Windows
-```
-
-3. Установите зависимости:
-```bash
-pip install -e .
-```
-
-4. Создайте файл .env с вашими учетными данными Yandex Cloud:
-```bash
-AWS_ACCESS_KEY_ID=your_access_key_id
-AWS_SECRET_ACCESS_KEY=your_secret_access_key
-AWS_DEFAULT_REGION=ru-central1
-MLFLOW_S3_BUCKET=your_bucket_name
-MLFLOW_S3_ENDPOINT_URL=https://storage.yandexcloud.net
-MLFLOW_ARTIFACT_ROOT=s3://your_bucket_name/mlflow
-```
-
-## Запуск MLflow
-
-1. Запустите MLflow в Docker контейнере:
-```bash
-docker-compose up --build
-```
-
-2. Проверьте доступность MLflow UI:
-   - Откройте http://localhost:5001 в браузере
-
-## Запуск Airflow
-
-1. Создайте необходимые директории:
-```bash
-mkdir -p dags logs plugins config
-```
-
-2. Инициализируйте Airflow (только при первом запуске):
-```bash
-docker compose -f docker-compose-airflow.yml up airflow-init
-```
-
-3. Запустите Airflow в Docker контейнере:
-```bash
-docker compose -f docker-compose-airflow.yml up --build
-```
-
-4. Проверьте доступность Airflow UI:
-   - Откройте http://localhost:8080 в браузере
-   - Логин: airflow
-   - Пароль: airflow
-
-### Структура Airflow
-
-- `dags/` - директория для DAG файлов
-  - `test_mlflow_dag.py` - пример DAG'а для тестирования модели
-- `logs/` - логи выполнения задач
-- `plugins/` - пользовательские плагины
-- `config/` - конфигурационные файлы
-
-### Пример использования Airflow
-
-1. Убедитесь, что MLflow запущен и содержит обученную модель:
-```bash
-docker compose up --build
-python tests/test_mlflow_utils.py
-```
-
-2. Запустите Airflow:
-```bash
-docker compose -f docker-compose-airflow.yml up --build
-```
-
-3. Откройте Airflow UI (http://localhost:8080) и найдите DAG "test_mlflow_model"
-
-4. Включите DAG и запустите его:
-   - Нажмите на переключатель слева от имени DAG'а для активации
-   - Нажмите на кнопку "Trigger DAG" для запуска
-
-5. Проверьте результаты:
-   - В Airflow UI: Graph View и Task Instance Details
-   - В MLflow UI (http://localhost:5001): новый эксперимент с результатами теста
-
-### Описание тестового DAG'а
-
-`test_mlflow_dag.py` демонстрирует:
-- Загрузку существующей модели из MLflow
-- Создание тестовых данных
-- Выполнение предсказаний
-- Логирование результатов обратно в MLflow
-
-Результаты включают:
-- Предсказания на новых данных
-- Метрики оригинальной модели
-- Параметры теста
-- Тестовые данные и предсказания как артефакты
-
-## Использование
-
-### Инициализация MLflow
-
-```python
-from src.utils import init_mlflow
-
-init_mlflow(
-    tracking_uri='http://localhost:5001',
-    experiment_name="your_experiment",
-    s3_bucket="balance-predictions"
-)
-```
-
-### Логирование эксперимента
-
-```python
-from src.utils import log_experiment
-
-run_id = log_experiment(
-    model=your_model,
-    model_name="model_name",
-    params={"param1": "value1"},
-    metrics={"metric1": 0.95},
-    artifacts={"artifact1": data}
-)
-```
-
-### Получение артефактов
-```python
-from src.utils import get_artifacts_by_run_name
-
-# Получение артефактов по имени запуска
-artifacts = get_artifacts_by_run_name("run_name", "experiment_name")
-model = artifacts["model"]
-
-# Получение артефактов по ID запуска
-artifacts = get_experiment_artifacts("run_id")
-model = artifacts["model"]
-```
-
-## Пример использования
-
-Смотрите `test_mlflow_example.py` для полного примера использования всех функций:
-
-```bash
-python test_mlflow_example.py
+├── .env                         # Переменные окружения
+├── .gitignore                   # Список игнорируемых git-файлов
+├── Dockerfile                   # Базовый образ для MLflow
+├── Dockerfile.airflow           # Образ для Airflow
+├── docker-compose.yml           # Композиция MLflow
+├── docker-compose-airflow.yml   # Композиция для Airflow
+├── README.md                    # Этот файл
+├── requirements.txt             # Python-зависимости
+├── setup_env.sh                 # Скрипт инициализации окружения
+├── setup.py                     # Установочный скрипт пакета
+│
+├── config/                      # Конфигурационные файлы
+│   └── …                         
+│
+├── dags/                        # Airflow DAGs
+│   └── …                         
+│
+├── data/                        # Данные (raw, interim, processed)
+│   └── …                         
+│
+├── images/                      # Вспомогательные изображения
+│   └── …                         
+│
+├── logs/                        # Логи запуска (Airflow, скрипты)
+│   └── …                         
+│
+├── mlruns/                      # Эксперименты MLflow
+│   └── …                         
+│
+├── notebooks/                   # Jupyter-блокноты для анализа и отладки
+│   └── …                         
+│
+├── src/                         # Исходный код пакета
+│   ├── balance_predictions.egg-info/
+│   ├── prod/                    # Производственные модули
+│   │   ├── __pycache__/
+│   │   ├── operators/           # Операторы Airflow
+│   │   │   ├── __pycache__/
+│   │   │   ├── __init__.py
+│   │   │   ├── data_collection.py        # Task для сбора признаков data_collection
+│   │   │   ├── drift_detection.py        # Task для поиска разладок drift_detection
+│   │   │   ├── feature_selection.py      # Task для отбора релевантных признаков feature_selection
+│   │   │   ├── model_training.py         # Task для переобучения модели retrain_model
+│   │   │   ├── scoring.py                # Task для скоринга score_data
+│   │   │   └── __init__.py
+│   │   ├── drift_detector.py
+│   │   ├── feature_engineering.py
+│   │   ├── feature_selection.py
+│   │   ├── metric.py
+│   │   └── utils.py
+│   └── __init__.py
+│   
+│
+└── tests/                       # Юнит-тесты и интеграционные тесты
 ```
 
 ### Описание компонентов

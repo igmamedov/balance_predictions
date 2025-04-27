@@ -26,8 +26,12 @@ def drift_detection_task(**context):
     
     try:
         # Get current date
-        current_date = datetime.now().date()
-        
+        dag_run = context['dag_run']
+        date = dag_run.conf.get('date') if dag_run and dag_run.conf else '2021-01-01'
+        logger.info(f'Дата скоринга: {date}')
+        date = datetime.strptime(date, '%Y-%m-%d')
+        current_date = date.date()
+
         # Load current data
         current_data = read_from_s3(
             s3_client=s3_client,
@@ -47,8 +51,9 @@ def drift_detection_task(**context):
         current_data.set_index(target_date_col, inplace=True)
         current_data = current_data['Balance']
 
+      
         # Get last available date
-        last_date = current_data.index.max().date()
+        last_date = current_date
         logger.info(f"Last available date in dataset: {last_date}")
         
         # Get value for last date
@@ -65,10 +70,10 @@ def drift_detection_task(**context):
         logger.info(f"Drift detection result: {'Detected' if flag else 'Not detected'}")
         
         # Push drift flag to XCom
-        context['ti'].xcom_push(key='drift_detected', value=True)
+        context['ti'].xcom_push(key='drift_detected', value=flag)
         
         # Also return the value for backward compatibility
-        return True
+        return flag
         
     except Exception as e:
         logger.error(f"Error in drift detection task: {str(e)}")
