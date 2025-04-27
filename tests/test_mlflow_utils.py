@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
-from src.utils import init_mlflow, log_experiment, get_experiment_artifacts
+from utils import init_mlflow, log_experiment, get_experiment_artifacts
 
 # Инициализация MLflow
 init_mlflow(
